@@ -41,15 +41,15 @@ async fn main() -> Result<()> {
         let _ = room.join().await;
     }
 
-    // --- FIX IS HERE ---
-    // We create a specific clone to be moved into the closure
     let client_handle = client.clone();
 
+    // Event listener for message events
     client.add_event_handler(move |ev: OriginalSyncRoomMessageEvent, room: Room| {
         let client = client_handle.clone();
         async move {
             let body = ev.content.body();
 
+            // Handling cat command
             if body.starts_with("!cat") {
                 let cat_url = match reqwest::get("https://api.thecatapi.com/v1/images/search").await
                 {
@@ -80,7 +80,6 @@ async fn main() -> Result<()> {
                     }
                 };
 
-                // Use the captured 'client' here
                 let upload_result = match client
                     .media()
                     .upload(&mime::IMAGE_JPEG, bytes_vec.clone(), None)
@@ -105,6 +104,7 @@ async fn main() -> Result<()> {
                 }
             }
 
+            // Handling joke command
             if body.starts_with("!joke") {
                 let joke_text = async {
                     let resp =
@@ -141,7 +141,6 @@ async fn main() -> Result<()> {
         }
     });
 
-    // This now works because `client` was not moved above
     client.add_event_handler(on_room_invite);
 
     let sync_settings = SyncSettings::default()
