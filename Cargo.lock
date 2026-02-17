@@ -292,6 +292,7 @@ dependencies = [
  "anyhow",
  "dotenv",
  "matrix-sdk",
+ "mime",
  "reqwest 0.13.2",
  "ruma",
  "serde",

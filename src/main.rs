@@ -1,10 +1,13 @@
 use anyhow::Result;
 use catbot::invite::on_room_invite;
+use catbot::models::cat::Cat;
 use catbot::models::joke::Joke;
 use dotenv::dotenv;
 use matrix_sdk::room::Room;
 use matrix_sdk::ruma::events::room::message::OriginalSyncRoomMessageEvent;
-use matrix_sdk::ruma::events::room::message::RoomMessageEventContent;
+use matrix_sdk::ruma::events::room::message::{
+    ImageMessageEventContent, MessageType, RoomMessageEventContent,
+};
 use matrix_sdk::{Client, config::SyncSettings};
 use ruma::UserId;
 use std::env;
@@ -38,18 +41,67 @@ async fn main() -> Result<()> {
         let _ = room.join().await;
     }
 
-    client.add_event_handler(
-        |ev: OriginalSyncRoomMessageEvent, room: matrix_sdk::room::Room| async move {
-            let sender = ev.sender.to_string();
+    // --- FIX IS HERE ---
+    // We create a specific clone to be moved into the closure
+    let client_handle = client.clone();
+
+    client.add_event_handler(move |ev: OriginalSyncRoomMessageEvent, room: Room| {
+        let client = client_handle.clone();
+        async move {
             let body = ev.content.body();
 
-            println!("{} -> {}", sender, body);
-
             if body.starts_with("!cat") {
-                let content = RoomMessageEventContent::text_plain("meow");
+                let cat_url = match reqwest::get("https://api.thecatapi.com/v1/images/search").await
+                {
+                    Ok(resp) => match resp.json::<Vec<Cat>>().await {
+                        Ok(list) if !list.is_empty() => list[0].url.clone(),
+                        _ => {
+                            eprintln!("Failed to parse cat API response");
+                            return;
+                        }
+                    },
+                    Err(err) => {
+                        eprintln!("Failed to fetch cat API: {:?}", err);
+                        return;
+                    }
+                };
 
-                if let Err(e) = room.send(content).await {
-                    eprintln!("failed to send message: {:?}", e);
+                let bytes_vec = match reqwest::get(&cat_url).await {
+                    Ok(resp) => match resp.bytes().await {
+                        Ok(b) => b.to_vec(),
+                        Err(_) => {
+                            eprintln!("Failed to read image bytes");
+                            return;
+                        }
+                    },
+                    Err(_) => {
+                        eprintln!("Failed to download cat image");
+                        return;
+                    }
+                };
+
+                // Use the captured 'client' here
+                let upload_result = match client
+                    .media()
+                    .upload(&mime::IMAGE_JPEG, bytes_vec.clone(), None)
+                    .await
+                {
+                    Ok(upload) => upload,
+                    Err(err) => {
+                        eprintln!("Media upload failed: {:?}", err);
+                        return;
+                    }
+                };
+
+                let mxc_uri = upload_result.content_uri;
+
+                let image_content =
+                    ImageMessageEventContent::plain("cat.jpg".to_string(), mxc_uri.clone());
+
+                let message = RoomMessageEventContent::new(MessageType::Image(image_content));
+
+                if let Err(err) = room.send(message).await {
+                    eprintln!("Failed to send cat image: {:?}", err);
                 }
             }
 
@@ -86,9 +138,10 @@ async fn main() -> Result<()> {
                     eprintln!("failed to send joke: {:?}", e);
                 }
             }
-        },
-    );
+        }
+    });
 
+    // This now works because `client` was not moved above
     client.add_event_handler(on_room_invite);
 
     let sync_settings = SyncSettings::default()
