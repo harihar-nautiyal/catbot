@@ -1,0 +1,61 @@
+name: Build aarch64-musl binary
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-aarch64-musl:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: aarch64-unknown-linux-musl
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - uses: arduino/setup-protoc@v3
+
+      - name: Install zig
+        run: |
+          wget -q https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz
+          tar xf zig-linux-x86_64-0.13.0.tar.xz
+          sudo mv zig-linux-x86_64-0.13.0 /usr/local/zig
+          echo "/usr/local/zig" >> $GITHUB_PATH
+
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild
+
+      - name: Install cross binutils
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binutils-aarch64-linux-gnu
+
+      - name: Build release binary
+        run: cargo zigbuild --release --target aarch64-unknown-linux-musl
+
+      - name: Strip binary
+        run: aarch64-linux-gnu-strip target/aarch64-unknown-linux-musl/release/catbot
+
+      - name: Prepare artifact
+        run: cp target/aarch64-unknown-linux-musl/release/catbot catbot-aarch64-linux-musl
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: catbot-aarch64-linux-musl
